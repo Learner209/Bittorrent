@@ -25,7 +25,9 @@ from asyncio import Queue
 from collections import namedtuple, defaultdict
 from hashlib import sha1
 import bitstring
-
+import threading
+import time
+from httpstat import httpstat
 
 from pieces.protocol import PeerConnection, REQUEST_SIZE
 from pieces.tracker import Tracker
@@ -201,20 +203,23 @@ class PeerConnectionManager:
         self.num_of_peer_connection_bandwidth_test_made = 0
         self.num_of_opt_unchoking_queries_made = 0
         self.optimistic_unchoking_random_choice = 0
-        # self.optimistic_unchoking_on =  False
-        
-        self.future = asyncio.ensure_future(self._optimistic_unchoking_choice())
 
-    async def _optimistic_unchoking_choice(self):
-        assert(False)
+        self.thread = threading.Thread(target=self._optimistic_unchoking_choice, args=())
+        self.thread.daemon = True
+        self.thread.start()
+
+
+    def _optimistic_unchoking_choice(self):
 
         while True:
-
-            if self.num_of_registered_peer_connections < 3:
-                await asyncio.sleep(10)
+            if self.num_of_registered_peer_connections < 3 or len(self.choked_peers) < 2:
+                # logging.debug("The length of the peer connections are {len1} and the choked peers length are {len2}"
+                #               .format(len1 = self.num_of_registered_peer_connections, len2 = len(self.choked_peers)))
+                time.sleep(15)
                 continue
+
             self.optimistic_unchoking_random_choice = \
-            self.choked_peers[random.randint(1,self.num_of_registered_peer_connections)-1]
+            self.choked_peers[random.randint(1,len(self.choked_peers))-1]
             
             self.optimistic_unchoking_timing = time.time()
             self.num_of_opt_unchoking_queries_made = 0
@@ -225,11 +230,31 @@ class PeerConnectionManager:
 
             logging.debug("We have chosen the optimstic unchoking objective: {}"
                         .format(self.optimistic_unchoking_random_choice))
-            await asyncio.sleep(10)
+            time.sleep(30)
 
-    def cancel(self):
-        if not self.future.done():
-            self.future.cancel()
+    def anti_snubbing_startegy(self, peer_id):
+        """
+        
+        Accoding to the spec: BitTorrent assumes it is "snubbed" by that peer and doesn't upload to it except as an optimistic unchoke.
+        This frequently results in more than one concurrent optimistic unchoke,
+        """
+        #logging.debug("The peer with peer id {id} have been snugging on us. So remove it.".format(id = peer_id))
+        self.peer_connection_pool[peer_id].stop()
+        self.unchoked_peers.remove(peer_id)
+        self.choked_peers.append(peer_id)
+        ## More than one concurrent optimistic unchoke 
+        self.optimistic_unchoking_random_choice = \
+        self.choked_peers[random.randint(1,len(self.choked_peers))-1]
+        
+        self.optimistic_unchoking_timing = time.time()
+        self.num_of_opt_unchoking_queries_made = 0
+        
+        self.peer_connection_pool[self.optimistic_unchoking_random_choice].restart()
+        self.choked_peers.remove(self.optimistic_unchoking_random_choice)
+        self.unchoked_peers.append(self.optimistic_unchoking_random_choice)
+
+        logging.debug("The anti-snugging strategy have chosen {} to be the concurrent optimistic unchoke"
+                    .format(self.optimistic_unchoking_random_choice))
 
 
 
@@ -239,15 +264,19 @@ class PeerConnectionManager:
             self.peer_connection_bandwidth[peer_id] = 1
             self.num_of_registered_peer_connections += 1
             self.unchoked_peers.append(peer_id)
+            # logging.debug("Peer with peer id :{id}  have successfully entered the process".format(id=peer_id))
         
     def unregister_peer_connection(self, peer_id):
         if peer_id in self.peer_connection_pool.keys():
             del self.peer_connection_pool[peer_id]
             del self.peer_connection_bandwidth[peer_id]
-            self.unchoked_peers.remove(peer_id)
+            if peer_id in self.unchoked_peers:
+                self.unchoked_peers.remove(peer_id)
+            if peer_id in self.choked_peers:
+                self.choked_peers.remove(peer_id)
             self.num_of_registered_peer_connections -= 1
         
-    def peer_connection_bandwidth_test(self, peer_id):
+    def peer_connection_bandwidth_test(self, peer_id, peer_ip_port):
         """
         Reciprocation and number of uploads capping is managed by 
         unchoking the four peers which have the best upload rate and are interested.
@@ -256,7 +285,13 @@ class PeerConnectionManager:
           because they are interested in downloading from the client."
         """
 
-        bandwidth = random.randint(0,9)
+        bandwidth = httpstat.httpstat(
+            server_ip= peer_ip_port.ip,
+            server_port= peer_ip_port.port
+        )
+        logging.debug("We have test the peer:{ip}:{port}, its bandwidth is {bandwidth}"
+                        .format(ip = peer_ip_port.ip, port = peer_ip_port.port, bandwidth = bandwidth))
+        
         self.peer_connection_bandwidth[peer_id] = bandwidth
 
         self.num_of_peer_connection_bandwidth_test_made += 1
@@ -273,8 +308,8 @@ class PeerConnectionManager:
                                                         key=lambda x:self.peer_connection_bandwidth[x], reverse=True)
                 counter = 0
                 for peer_id in peers_to_be_choked:
-                    if counter < self.num_of_registered_peer_connections:
-                        logging.debug("The peer id {id} has been reserved".format(id = peer_id))
+                    if counter < 4: # self.num_of_registered_peer_connections:
+                        logging.debug("The peer id {id} has been reserved for unchoking".format(id = peer_id))
                         if peer_id in self.choked_peers:
                             self.peer_connection_pool[peer_id].restart()
                             self.choked_peers.remove(peer_id)

@@ -21,7 +21,7 @@ import struct
 from asyncio import Queue
 from concurrent.futures import CancelledError
 import time
-
+from collections import namedtuple
 
 import bitstring
 
@@ -60,7 +60,7 @@ class PeerConnection:
     the next available peer from off the queue and try to connect to that one
     instead.
     """
-
+    IP_PORT = namedtuple("IP_PORT", ["ip", "port"])
     def __init__(self, queue: Queue, info_hash,
                 peer_id, 
                 piece_manager,
@@ -96,13 +96,13 @@ class PeerConnection:
         self.future = asyncio.ensure_future(self._start())  # Start this worker
         # self.optimistic_unchoking_future = asyncio.ensure_future(piece_manager.optimistic_unchoking_choice())  # Start this worker
         self.stalled = False ## stalled means the prev. info has benn reserved
-        
+        self.ip_port = None
 
 
     async def _start(self):
         while 'stopped' not in self.my_state:
             ip, port = await self.queue.get()
-    
+            self.ip_port = PeerConnection.IP_PORT(ip, port)
             logging.info('Got assigned peer with: {ip} at {port}'
                             .format(ip=ip, port = port))
             try:
@@ -135,29 +135,35 @@ class PeerConnection:
                 
                 # Start reading responses as a stream of messages for as
                 # long as the connection is open and data is transmitted
+                # while True:
                 async for message in PeerStreamIterator(self.reader, self.buffer):
+                    ## logging.debug("The message we have receieed is of type {}".format(type(message)))
                     if 'stopped' in self.my_state:
                         break
                     try:
-                        await asyncio.wait_for(self._interact_with_peer(message=message), timeout=10)
+                        await asyncio.wait_for(self._interact_with_peer(message=message), timeout=5)
                     except asyncio.TimeoutError:
-                        logging.debug("The peer with id {} has been snubbing me ".format(self.remote_id))
+                        if not self.stalled:
+                            logging.debug("The peer with id {} has been snubbing me ".format(self.remote_id))
+                            self.peer_connection_manager.anti_snubbing_startegy(
+                                peer_id = self.remote_id
+                            )
 
-
-            except ProtocolError as e:
+            except ProtocolError as e: ## Handshake Error
                 logging.exception('Protocol error')
-            except (ConnectionRefusedError, TimeoutError):
+            except (ConnectionRefusedError, TimeoutError): ## Exception caused in open_connction()
                 logging.warning('Unable to connect to peer')
             except (ConnectionResetError, CancelledError):
                 logging.warning('Connection closed')
-            except Exception as e:
+                self.peer_connection_manager.unregister_peer_connection( ## Only in this scenario have we alreaady succeeded in registering the connection before
+                    peer_id = self.remote_id
+                )
+            except Exception as e: ## Mostly likely to be the OS error in open_connection()
                 logging.exception('An error occurred.')
                 self.cancel()
                
                 raise e
-            self.peer_connection_manager.unregister_peer_connection(
-                    peer_id = self.remote_id
-                )
+
             self.cancel()
 
     async def _interact_with_peer(self, message):
@@ -178,8 +184,9 @@ class PeerConnection:
             > self.peer_connection_manager.choking_test_interval:
                 # logging.debug("Bandwidth test executed for {peer}".format(peer = self.remote_id))
                 self.peer_connection_manager.peer_connection_bandwidth_test(
-                    peer_id = self.remote_id
+                    peer_id = self.remote_id, peer_ip_port = self.ip_port
                 )
+
 
         while self.stalled:
             current_time = time.time()
@@ -189,9 +196,8 @@ class PeerConnection:
                 > self.peer_connection_manager.choking_test_interval:
                     # logging.debug("Bandwidth test executed for {peer}".format(peer = self.remote_id))
                     self.peer_connection_manager.peer_connection_bandwidth_test(
-                        peer_id = self.remote_id
+                        peer_id = self.remote_id, peer_ip_port = self.ip_port
                     )
-                    
 
             message = KeepAlive()
             self.writer.write(message.encode())
@@ -244,7 +250,10 @@ class PeerConnection:
         elif type(message) is Cancel:
             # TODO Add support for sending data
             logging.info('Ignoring the received Cancel message.')
-
+        elif isinstance(message, Timeout):
+            self.peer_connection_manager.anti_snubbing_startegy(
+                peer_id = self.remote_id
+            )
         # Send block request to remote peer if we're interested
         if 'choked' not in self.my_state:
             if 'interested' in self.my_state:
@@ -288,6 +297,7 @@ class PeerConnection:
         # Set state to stopped and cancel our future to break out of the loop.
         # The rest of the cleanup will eventually be managed by loop calling
         # `cancel`.
+
         self.stalled = True       
 
     def restart(self):
@@ -297,6 +307,7 @@ class PeerConnection:
         # Set state to stopped and cancel our future to break out of the loop.
         # The rest of the cleanup will eventually be managed by loop calling
         # `cancel`.
+
         self.stalled = False   
 
 
@@ -465,6 +476,14 @@ class PeerStreamIterator:
         return self
 
     async def __anext__(self):
+        try:
+            message = await asyncio.wait_for(self.anext(), timeout=5)
+            return message
+        except asyncio.exceptions.TimeoutError:
+            logging.debug("This message have been snubbing us for all on time")
+            return Timeout()
+
+    async def anext(self):
         # Read data from the socket. When we have enough data to parse, parse
         # it and return the message. Until then keep reading from stream
         while True:
@@ -744,6 +763,13 @@ class BitField(PeerMessage):
 
     def __str__(self):
         return 'BitField'
+
+class Timeout(PeerMessage):
+    """
+    The timeout is directly cause by the peer, so accounted as inheritance of PeerMessage
+    """
+    def __str__(self):
+        return 'Timeout'
 
 
 class Interested(PeerMessage):
