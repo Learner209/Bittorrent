@@ -22,7 +22,7 @@ from asyncio import Queue
 from concurrent.futures import CancelledError
 import time
 from collections import namedtuple
-
+from .util import timeit
 import bitstring
 
 # The default request size for blocks of pieces is 2^14 bytes.
@@ -144,7 +144,7 @@ class PeerConnection:
                         await asyncio.wait_for(self._interact_with_peer(message=message), timeout=5)
                     except asyncio.TimeoutError:
                         if not self.stalled:
-                            logging.debug("The peer with id {} has been snubbing me ".format(self.remote_id))
+                            
                             self.peer_connection_manager.anti_snubbing_startegy(
                                 peer_id = self.remote_id
                             )
@@ -184,7 +184,9 @@ class PeerConnection:
             > self.peer_connection_manager.choking_test_interval:
                 # logging.debug("Bandwidth test executed for {peer}".format(peer = self.remote_id))
                 self.peer_connection_manager.peer_connection_bandwidth_test(
-                    peer_id = self.remote_id, peer_ip_port = self.ip_port
+                    peer_id = self.remote_id, 
+                    peer_ip_port = self.ip_port, 
+                    enable_end_game_mode = 'end_game_mode' in self.my_state
                 )
 
 
@@ -196,7 +198,9 @@ class PeerConnection:
                 > self.peer_connection_manager.choking_test_interval:
                     # logging.debug("Bandwidth test executed for {peer}".format(peer = self.remote_id))
                     self.peer_connection_manager.peer_connection_bandwidth_test(
-                        peer_id = self.remote_id, peer_ip_port = self.ip_port
+                        peer_id = self.remote_id, 
+                        peer_ip_port = self.ip_port, 
+                        enable_end_game_mode = 'end_game_mode' in self.my_state
                     )
 
             message = KeepAlive()
@@ -226,7 +230,7 @@ class PeerConnection:
         elif type(message) is KeepAlive:
             pass
         elif type(message) is Piece:
-
+            self.peer_connection_manager.blocks_already_sent[self.remote_id] += 1
             block_received = self.on_block_cb(
                     peer_id=self.remote_id,
                     piece_index=message.index,
@@ -251,6 +255,7 @@ class PeerConnection:
             # TODO Add support for sending data
             logging.info('Ignoring the received Cancel message.')
         elif isinstance(message, Timeout):
+     
             self.peer_connection_manager.anti_snubbing_startegy(
                 peer_id = self.remote_id
             )
@@ -265,7 +270,7 @@ class PeerConnection:
                 elif 'pending_request' not in self.my_state:
                     if not self.piece_manager._is_suitable_to_enter_the_end_game_mode(peer_id = self.remote_id,
                                                                                     end_game_mode = 2):
-                    #if False:
+                    # if False:
                         chk = await self._request_piece()
                         if chk:
                             self.my_state.append('pending_request')
@@ -388,7 +393,6 @@ class PeerConnection:
             return True
         else:
             return False
-        
 
     async def _handshake(self):
         """

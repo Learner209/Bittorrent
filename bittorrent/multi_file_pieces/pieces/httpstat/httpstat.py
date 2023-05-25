@@ -53,12 +53,12 @@ def timeout(timeout):
         return wrapper
     return decorator
 
-def httpstat_test(server_ip, server_port):
+def httpstat_test_multi_thread(server_ip, server_port):
     thread_pool = []
     _max_bandwidth_test = 1
     Test_result = []
     for _ in range(_max_bandwidth_test):
-        thread = Thread(target= httpstat, args= (server_ip, server_port, Test_result))
+        thread = Thread(target= httpstat_test, args= (server_ip, server_port, Test_result))
         thread.daemon = True
         thread.start()
         thread_pool.append(thread)
@@ -68,7 +68,7 @@ def httpstat_test(server_ip, server_port):
           if len(list(filter(lambda x: x is not None, Test_result))) > 0 else None
     
 
-def httpstat(server_ip, server_port, test_result = None):
+def httpstat_test(server_ip, server_port, test_result = None):
     try:
         res = _httpstat(server_ip=server_ip, server_port=server_port)
         if test_result:
@@ -106,8 +106,8 @@ def _httpstat(server_ip, server_port):
     out, err = open_process.communicate()
 
     out, err = out.decode(), err.decode()
-    logging.debug("stdout is {stdout}"
-                  .format(stdout = out))
+    # logging.debug("stdout is {stdout}"
+    #               .format(stdout = out))
 
     pattern = re.compile(r'\bBandwidth\b')
     match = pattern.search(out)
@@ -123,10 +123,10 @@ def _httpstat(server_ip, server_port):
             if match_kbits:
                 speed = float(match_kbits.group(1))
                 return speed / 1000
-    return None
+    return 0
 
 if __name__ == '__main__':
 
-    speed = httpstat(server_ip= '80.78.21.111', server_port= 53463
+    speed = httpstat_test(server_ip= '80.78.21.111', server_port= 53463
                      )
     print(speed)

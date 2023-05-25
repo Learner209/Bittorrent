@@ -27,7 +27,8 @@ from hashlib import sha1
 import bitstring
 import threading
 import time
-from httpstat import httpstat
+
+from .httpstat import httpstat
 
 from pieces.protocol import PeerConnection, REQUEST_SIZE
 from pieces.tracker import Tracker
@@ -51,7 +52,14 @@ class TorrentClient:
     (or worse yet processes) we can create them all at once and they will
     be waiting until there is a peer to consume in the queue.
     """
-    def __init__(self, torrent):
+    def __init__(self,
+                torrent,
+                enable_optimistic_unchoking,
+                enable_anti_snubbing,
+                enable_choking_strategy,
+                enable_end_game_mode,
+                enable_rarest_piece_first):
+        
         self.tracker = Tracker(torrent)
         # The list of potential peers is the work queue, consumed by the
         # PeerConnections
@@ -62,8 +70,16 @@ class TorrentClient:
         self.peers = []
         # The piece manager implements the strategy on which pieces to
         # request, as well as the logic to persist received pieces to disk.
-        self.piece_manager = PieceManager(torrent)
-        self.peer_connection_manager = PeerConnectionManager(self.available_peers)
+        self.piece_manager = PieceManager(
+                    torrent,
+                    enable_end_game_mode= enable_end_game_mode,
+                    enable_rarest_piece_first = enable_rarest_piece_first
+            )
+        self.peer_connection_manager = PeerConnectionManager(available_peers = self.available_peers, 
+                enable_optimistic_unchoking = enable_optimistic_unchoking,
+                enable_anti_snubbing = enable_anti_snubbing,
+                enable_choking_strategy = enable_choking_strategy,
+                enable_end_game_mode = enable_end_game_mode)
         self.abort = False
 
     async def start(self):
@@ -129,6 +145,7 @@ class TorrentClient:
             peer.stop()
         self.piece_manager.close()
         self.tracker.close()
+        self.peer_connection_manager.close()
 
     def _on_block_retrieved(self, peer_id, piece_index, block_offset, data, enable_end_game_mode = False):
         """
@@ -189,7 +206,16 @@ class PeerConnectionManager:
     Unchoked = 0
     Choked = 1
 
-    def __init__(self, available_peers) -> None:
+    enable_anti_snubbing = None
+    enable_choking_strategy = None
+    enable_optimistic_unchoking = None
+    enable_end_game_mode = None
+
+    def __init__(self, available_peers, 
+                enable_optimistic_unchoking,
+                enable_anti_snubbing,
+                enable_choking_strategy,
+                enable_end_game_mode) -> None:
         self.avaiable_peers = available_peers
         self.peer_connection_pool = {}
         self.peer_connection_bandwidth = {}
@@ -203,14 +229,25 @@ class PeerConnectionManager:
         self.num_of_peer_connection_bandwidth_test_made = 0
         self.num_of_opt_unchoking_queries_made = 0
         self.optimistic_unchoking_random_choice = 0
+        self.blocks_already_sent = {}
 
-        self.thread = threading.Thread(target=self._optimistic_unchoking_choice, args=())
+        
+        PeerConnectionManager.enable_optimistic_unchoking = enable_optimistic_unchoking
+        PeerConnectionManager.enable_anti_snubbing = enable_anti_snubbing
+        PeerConnectionManager.enable_choking_strategy = enable_choking_strategy
+        PeerConnectionManager.enable_end_game_mode = enable_end_game_mode
+                
+        self.thread = threading.Thread(target=self._optimistic_unchoking_choice, args=()) 
         self.thread.daemon = True
         self.thread.start()
 
 
-    def _optimistic_unchoking_choice(self):
+    def close(self):
+        self.thread.join()
 
+    def _optimistic_unchoking_choice(self):
+        if not PeerConnectionManager.enable_optimistic_unchoking:
+            return
         while True:
             if self.num_of_registered_peer_connections < 3 or len(self.choked_peers) < 2:
                 # logging.debug("The length of the peer connections are {len1} and the choked peers length are {len2}"
@@ -238,23 +275,27 @@ class PeerConnectionManager:
         Accoding to the spec: BitTorrent assumes it is "snubbed" by that peer and doesn't upload to it except as an optimistic unchoke.
         This frequently results in more than one concurrent optimistic unchoke,
         """
+        if not PeerConnectionManager.enable_anti_snubbing:
+            return
+        logging.debug("The peer with id {} has been snubbing me ".format(peer_id))
         #logging.debug("The peer with peer id {id} have been snugging on us. So remove it.".format(id = peer_id))
         self.peer_connection_pool[peer_id].stop()
         self.unchoked_peers.remove(peer_id)
         self.choked_peers.append(peer_id)
         ## More than one concurrent optimistic unchoke 
-        self.optimistic_unchoking_random_choice = \
-        self.choked_peers[random.randint(1,len(self.choked_peers))-1]
-        
-        self.optimistic_unchoking_timing = time.time()
-        self.num_of_opt_unchoking_queries_made = 0
-        
-        self.peer_connection_pool[self.optimistic_unchoking_random_choice].restart()
-        self.choked_peers.remove(self.optimistic_unchoking_random_choice)
-        self.unchoked_peers.append(self.optimistic_unchoking_random_choice)
+        if len(self.choked_peers) > 1:
+            self.optimistic_unchoking_random_choice = \
+            self.choked_peers[random.randint(1,len(self.choked_peers))-1]
+            
+            self.optimistic_unchoking_timing = time.time()
+            self.num_of_opt_unchoking_queries_made = 0
+            
+            self.peer_connection_pool[self.optimistic_unchoking_random_choice].restart()
+            self.choked_peers.remove(self.optimistic_unchoking_random_choice)
+            self.unchoked_peers.append(self.optimistic_unchoking_random_choice)
 
-        logging.debug("The anti-snugging strategy have chosen {} to be the concurrent optimistic unchoke"
-                    .format(self.optimistic_unchoking_random_choice))
+            logging.debug("The anti-snugging strategy have chosen {} to be the concurrent optimistic unchoke"
+                        .format(self.optimistic_unchoking_random_choice))
 
 
 
@@ -263,6 +304,7 @@ class PeerConnectionManager:
             self.peer_connection_pool[peer_id] = peer_connection
             self.peer_connection_bandwidth[peer_id] = 1
             self.num_of_registered_peer_connections += 1
+            self.blocks_already_sent[peer_id] = 0
             self.unchoked_peers.append(peer_id)
             # logging.debug("Peer with peer id :{id}  have successfully entered the process".format(id=peer_id))
         
@@ -270,13 +312,14 @@ class PeerConnectionManager:
         if peer_id in self.peer_connection_pool.keys():
             del self.peer_connection_pool[peer_id]
             del self.peer_connection_bandwidth[peer_id]
+            del self.blocks_already_sent[peer_id]
             if peer_id in self.unchoked_peers:
                 self.unchoked_peers.remove(peer_id)
             if peer_id in self.choked_peers:
                 self.choked_peers.remove(peer_id)
             self.num_of_registered_peer_connections -= 1
         
-    def peer_connection_bandwidth_test(self, peer_id, peer_ip_port):
+    def peer_connection_bandwidth_test(self, peer_id, peer_ip_port, enable_end_game_mode):
         """
         Reciprocation and number of uploads capping is managed by 
         unchoking the four peers which have the best upload rate and are interested.
@@ -284,13 +327,15 @@ class PeerConnectionManager:
           These four peers are referred to as downloaders, 
           because they are interested in downloading from the client."
         """
-
-        bandwidth = httpstat.httpstat(
-            server_ip= peer_ip_port.ip,
-            server_port= peer_ip_port.port
-        )
-        logging.debug("We have test the peer:{ip}:{port}, its bandwidth is {bandwidth}"
-                        .format(ip = peer_ip_port.ip, port = peer_ip_port.port, bandwidth = bandwidth))
+        if not PeerConnectionManager.enable_choking_strategy:
+            return None
+        # bandwidth = httpstat.httpstat_test(
+        #     server_ip= peer_ip_port.ip,
+        #     server_port= peer_ip_port.port
+        # )
+        bandwidth = self.blocks_already_sent[peer_id]
+        # logging.debug("We have test the peer:{ip}:{port}, its bandwidth is {bandwidth}"
+        #                 .format(ip = peer_ip_port.ip, port = peer_ip_port.port, bandwidth = bandwidth))
         
         self.peer_connection_bandwidth[peer_id] = bandwidth
 
@@ -308,7 +353,7 @@ class PeerConnectionManager:
                                                         key=lambda x:self.peer_connection_bandwidth[x], reverse=True)
                 counter = 0
                 for peer_id in peers_to_be_choked:
-                    if counter < 4: # self.num_of_registered_peer_connections:
+                    if counter < (4,self.num_of_registered_peer_connections)[enable_end_game_mode]: # self.num_of_registered_peer_connections:
                         logging.debug("The peer id {id} has been reserved for unchoking".format(id = peer_id))
                         if peer_id in self.choked_peers:
                             self.peer_connection_pool[peer_id].restart()
@@ -325,7 +370,9 @@ class PeerConnectionManager:
                 # for peer_id in list(self.peer_connection_pool.keys()):
                 #     logging.debug("The peer id {id} with {bandwidth} has been suspended".format(id = peer_id,bandwidth=self.peer_connection_bandwidth[peer_id]))
                 #     self.peer_connection_pool[peer_id].restart()
-                
+
+                for key in self.blocks_already_sent.keys():
+                    self.blocks_already_sent[key] = 0
 
                 self.choking_timing = time.time()
                 self.num_of_peer_connection_bandwidth_test_made = 0
@@ -440,7 +487,14 @@ class PieceManager:
     The strategy on which piece to request is made as simple as possible in
     this implementation.
     """
-    def __init__(self, torrent):
+    enable_end_game_mode = None
+    enable_rarest_piece_first = None
+
+
+    def __init__(self, torrent, 
+                enable_end_game_mode = False,
+                enable_rarest_piece_first = False):
+        
         self.torrent = torrent
         self.peers = {}
         self.pending_blocks = []
@@ -453,6 +507,9 @@ class PieceManager:
         self.end_game_mode_request = {}
         self.end_game_cancelled = {}
         self.fd = os.open(self.torrent.output_file,  os.O_RDWR | os.O_CREAT)
+
+        PieceManager.enable_end_game_mode = enable_end_game_mode
+        PieceManager.enable_rarest_piece_first = enable_rarest_piece_first
 
     def _initiate_pieces(self) -> [Piece]:
         """
@@ -741,6 +798,8 @@ class PieceManager:
         low (1 or 2 blocks) to minimize the overhead, 
         and if you randomize the blocks requested, there's a lower chance of downloading duplicates. 
         """
+        if not PieceManager.enable_end_game_mode:
+            return False
         # When all pieces have been requested.
         if end_game_mode == 1:
             if len(self.missing_pieces) == self.total_pieces:
@@ -838,6 +897,10 @@ class PieceManager:
         rarest one first (i.e. a piece which fewest of its
         neighboring peers have)
         """
+        if not PieceManager.enable_rarest_piece_first:
+            return self.missing_pieces[random.randint(1, len(self.missing_pieces))-1]
+
+
         piece_count = defaultdict(int)
         for piece in self.missing_pieces:
             if not self.peers[peer_id][piece.index]:
