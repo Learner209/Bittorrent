@@ -53,7 +53,7 @@ def main():
         "-o",
         "--optimistic-unchoking",
         action='store_true',
-        default="False",
+        default=False,
         help="Whether to use the optimistic unchoking strategy.",
     )
 
@@ -61,7 +61,7 @@ def main():
         "-a",
         "--anti-snubbing",
         action='store_true',
-        default="False",
+        default=False,
         help="Whether to use the anti-snubbing strategy.",
     )
 
@@ -69,7 +69,7 @@ def main():
         "-c",
         "--choking-strategy",
         action='store_true',
-        default="False",
+        default=False,
         help="Whether to use the choking strategy.",
     )
     
@@ -77,7 +77,7 @@ def main():
         "-e",
         "--end-game-mode",
         action='store_true',
-        default="False",
+        default=False,
         help="Whether to use the End-game optimization.",
     )
 
@@ -85,7 +85,7 @@ def main():
         "-r",
         "--rarest-piece-first",
         action='store_true',
-        default="False",
+        default=False,
         help="Whether to use the rarest piece first strategy.",
     )
 
@@ -93,19 +93,22 @@ def main():
         "-b",
         "--bbs-plus",
         action='store_true',
-        default="False",
+        default=False,
         help="Whether to enable bbs plus optimization (May lead to network congestion and bandwidth waste).",
     )
 
     parser.add_argument(
         "-p",
         "--port",
+        default=None,
         help="The port that the local DHT node is listening from.",
     )
 
     parser.add_argument(
         "-d",
         "--dht",
+        action='store_true',
+        default=False,
         help="Whether use DHT(Distributed Hash Table) extension.",
     )
     
@@ -149,8 +152,11 @@ def main():
                 enabel_dht_network=True if args.dht == True else False
                 )
     
-
-    task = loop.create_task(client.start(port=int(args.port) if isinstance(int(args.port), int) else None))
+    if args.port is not None:
+        port = args.port
+    else:
+        port = None
+    task = loop.create_task(client.start(port=port))
 
     def signal_handler(*_):
         logging.info('Exiting, please wait until everything is shutdown...')

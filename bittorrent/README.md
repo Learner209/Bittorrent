@@ -41,6 +41,8 @@ options:
 ### 2. *multi-file-pieces*
 Basic test: `python pieces.py -t ubuntu.torrent` to download the $.torrent$ file.([3],[4],[5],[6],[7],[8])
 
+![visual pieces](img/2.png)
+
 Run `python pieces.py -h` to say more optinal choices.
 ```
 usage: pieces.py [-h] [-t TORRENT] [-m MAGNET_LINK] [-v] [-o] [-a] [-c] [-e] [-r] [-b] [-p PORT] [-d DHT]
