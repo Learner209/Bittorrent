@@ -19,6 +19,7 @@ from hashlib import sha1
 from collections import namedtuple
 import os
 
+import logging
 from . import bencoding
 
 # Represents the files within the torrent (i.e. the files to write to disk)
@@ -42,6 +43,7 @@ class Torrent:
             info = bencoding.Encoder(self.meta_info[b'info']).encode()
             self.info_hash = sha1(info).digest()
             self._identify_files()
+            logging.debug("{}".format(self.__str__()))
         #print(self.meta_info)
 
     def _identify_files(self):
@@ -133,7 +135,7 @@ class Torrent:
             return self.meta_info[b'info'][b'name'].decode('utf-8')
 
     def __str__(self):
-        return 'Filename: {0}\n' \
+        return '\n Filename: {0}\n' \
                'File length: {1}\n' \
                'Announce URL: {2}\n' \
                'Hash: {3}'.format(self.meta_info[b'info'][b'name'],

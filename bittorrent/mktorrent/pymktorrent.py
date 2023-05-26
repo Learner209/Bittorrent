@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # coding: utf-8
-
+## Reference: https://github.com/pobrn/mktorrent.git
 import os
 import logging
 import subprocess
-
+import argparse
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -73,10 +73,10 @@ def main(announce_urls,
             logging.warning("The comment added to the meta info:'{}' is not allowed".format(comment_to_the_metainfo))
             return None
         cmd += ' -c {}'.format(comment_to_the_metainfo)
-    if donotWrite is not None:
-        cmd += ' -d {}'.format(donotWrite)
+    if donotWrite:
+        cmd += ' -d'
     if piece_length_setter is not None and \
-        isinstance(piece_length_setter, int) and piece_length_setter in [14, 15]:
+        isinstance(piece_length_setter, int) and piece_length_setter in [16, 15, 17, 18, 19, 20]:
         cmd += ' -l {}'.format(piece_length_setter)
     if torrent_name is not None:
         if ' ' in torrent_name:
@@ -101,13 +101,77 @@ def main(announce_urls,
 
 if __name__ == '__main__':
 
+    # main(
+    #     announce_urls = ['https://opentracker.i2p.rocks:443/announce'], 
+    #     filename_of_the_file_to_be_torrented = 'suhao.pdf',
+    #     comment_to_the_metainfo = "EasyHec_Hand-Eye_calibration", 
+    #     donotWrite = None, 
+    #     piece_length_setter = 14, 
+    #     torrent_name = "EasyHec_Hand-Eye_calibration", 
+    #     torrent_path_and_filename = "~/Desktop/suhao_new", 
+    #     verbose = True, 
+    # )
+    # Parse input arguments
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument(
+        "-a",
+        "--announce-urls",
+        required=True,
+        help="Announce url of the tracker.",
+    )
+    parser.add_argument(
+        "-f",
+        "--input-file",
+        required=True,
+        help="The input file to be made .torrent of",
+    )
+    parser.add_argument(
+        "-c", "--comment", help="Comment to the meta-info of the .torrent file", default=None
+    )
+    parser.add_argument(
+        "-w",
+        "--not-write",
+        action='store_true',
+        default=False,
+        help="Don't write the creation date.",
+    )
+    parser.add_argument(
+        "-l",
+        "--piece-length",
+        type=int,
+        default=None,
+        help="The length of a piece.",
+    )
+    parser.add_argument(
+        "-n",
+        "--torrent-name",
+        default=None,
+        help="set the name of the torrent",
+    )
+    parser.add_argument(
+        "-p",
+        "--torrent-path",
+        default=None,
+        help="set the path and filename of the created file \
+                        default is <name>.torrent"
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action='store_true',
+        help="be verbose"
+    )
+    args = parser.parse_args()
+
     main(
-        announce_urls = ['https://opentracker.i2p.rocks:443/announce'], 
-        filename_of_the_file_to_be_torrented = 'suhao.pdf',
-        comment_to_the_metainfo = "EasyHec_Hand-Eye_calibration", 
-        donotWrite = None, 
-        piece_length_setter = 14, 
-        torrent_name = "EasyHec_Hand-Eye_calibration", 
-        torrent_path_and_filename = "~/Desktop/suhao_new", 
-        verbose = True, 
+        announce_urls = [args.announce_urls.split(',')], 
+        filename_of_the_file_to_be_torrented = args.input_file,
+        comment_to_the_metainfo = args.comment, 
+        donotWrite = True if args.not_write == True else False, 
+        piece_length_setter = args.piece_length, 
+        torrent_name = args.torrent_name, 
+        torrent_path_and_filename = args.torrent_path, 
+        verbose = True if args.verbose == True else False, 
     )

@@ -27,7 +27,7 @@ from hashlib import sha1
 import bitstring
 import threading
 import time
-
+from .kademlia.network import Server
 from .httpstat import httpstat
 
 from pieces.protocol import PeerConnection, REQUEST_SIZE
@@ -52,6 +52,7 @@ class TorrentClient:
     (or worse yet processes) we can create them all at once and they will
     be waiting until there is a peer to consume in the queue.
     """
+    enable_DHT_network = None
     MAX_CONNECTION_KEEP_ALIVE_TIME = 120 # 2 minutes
     def __init__(self,
                 torrent,
@@ -60,7 +61,9 @@ class TorrentClient:
                 enable_choking_strategy,
                 enable_end_game_mode,
                 enable_rarest_piece_first,
-                enable_bbs_plus):
+                enable_bbs_plus,
+                enabel_dht_network
+                ):
         
         self.tracker = Tracker(torrent)
         # The list of potential peers is the work queue, consumed by the
@@ -72,6 +75,11 @@ class TorrentClient:
         self.peers = []
         # The piece manager implements the strategy on which pieces to
         # request, as well as the logic to persist received pieces to disk.
+
+        # self.DHTserver = Server()
+        
+        self.DHTthread = None
+        TorrentClient.enable_DHT_network = enabel_dht_network
         self.piece_manager = PieceManager(
                     torrent,
                     enable_end_game_mode= enable_end_game_mode,
@@ -83,10 +91,15 @@ class TorrentClient:
                 enable_optimistic_unchoking = enable_optimistic_unchoking,
                 enable_anti_snubbing = enable_anti_snubbing,
                 enable_choking_strategy = enable_choking_strategy,
-                enable_end_game_mode = enable_end_game_mode)
+                enable_end_game_mode = enable_end_game_mode,
+            )
+        
+        
         self.abort = False
 
-    async def start(self):
+
+
+    async def start(self, port = None):
         """
         Start downloading the torrent held by this client.
 
@@ -125,16 +138,39 @@ class TorrentClient:
                     uploaded=self.piece_manager.bytes_uploaded,
                     downloaded=self.piece_manager.bytes_downloaded)
 
-                logging.debug(response)
+                # logging.debug(response)
                 if response:
                     previous = current
                     interval = response.interval
                     self._empty_queue()
                     for peer in response.peers:
                         self.available_peers.put_nowait(peer)
+
+                    # asyncio.run(self.DHTserver.connect_to_bootstrap_node(
+                    #     args=response.peers,
+                    #     server=self.DHTserver
+                    # ))
+
+                    if self.DHTthread is None and TorrentClient.enable_DHT_network:
+                        self.DHTthread = threading.Thread(target= Server,
+                                                        args=(response.peers, 
+                                                              port,
+                                                              self.tracker.torrent.info_hash))
+                    elif self.DHTthread is not None:
+                        self.DHTthread.join()
+                    # self.DHTserver.connect_to_bootstrap_node(
+                    #     args = response.peers,
+                    #     server = self.DHTserver
+                    # )
+                    if TorrentClient.enable_DHT_network:
+                        self.DHTthread.daemon = True
+                        self.DHTthread.start()
+
+                    
             else:
                 await asyncio.sleep(5)
         await self.stop()
+
 
     def _empty_queue(self):
         while not self.available_peers.empty():
@@ -221,11 +257,13 @@ class PeerConnectionManager:
     enable_end_game_mode = None
     in_end_game_mode = False
 
-    def __init__(self, available_peers, 
+    def __init__(self,
+                available_peers, 
                 enable_optimistic_unchoking,
                 enable_anti_snubbing,
                 enable_choking_strategy,
-                enable_end_game_mode) -> None:
+                enable_end_game_mode,
+                ) -> None:
         self.avaiable_peers = available_peers
         self.peer_connection_pool = {}
         self.peer_connection_bandwidth = {}
@@ -240,7 +278,7 @@ class PeerConnectionManager:
         self.num_of_opt_unchoking_queries_made = 0
         self.optimistic_unchoking_random_choice = 0
         self.blocks_already_sent = {}
-
+ 
         
         PeerConnectionManager.enable_optimistic_unchoking = enable_optimistic_unchoking
         PeerConnectionManager.enable_anti_snubbing = enable_anti_snubbing
@@ -251,6 +289,7 @@ class PeerConnectionManager:
         self.thread = threading.Thread(target=self._optimistic_unchoking_choice, args=()) 
         self.thread.daemon = True
         self.thread.start()
+
 
 
     def close(self):

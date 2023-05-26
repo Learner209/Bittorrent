@@ -1,2 +1,4 @@
 argparse
 subprocess
+libtorrent
+umsgpack

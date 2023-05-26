@@ -88,7 +88,7 @@ class TrackerResponse:
         if type(peers) == list:
             # TODO Implement support for dictionary peer list
             peers = [(peer[b'ip'].decode(),peer[b'port'])for peer in peers]
-            logging.debug('peers are {0}'.format(peers)) 
+            ## logging.debug('peers are {0}'.format(peers)) 
             logging.debug('Dictionary model peers are returned by tracker')
             return peers
             raise NotImplementedError()
