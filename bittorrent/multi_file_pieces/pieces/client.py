@@ -52,13 +52,15 @@ class TorrentClient:
     (or worse yet processes) we can create them all at once and they will
     be waiting until there is a peer to consume in the queue.
     """
+    MAX_CONNECTION_KEEP_ALIVE_TIME = 120 # 2 minutes
     def __init__(self,
                 torrent,
                 enable_optimistic_unchoking,
                 enable_anti_snubbing,
                 enable_choking_strategy,
                 enable_end_game_mode,
-                enable_rarest_piece_first):
+                enable_rarest_piece_first,
+                enable_bbs_plus):
         
         self.tracker = Tracker(torrent)
         # The list of potential peers is the work queue, consumed by the
@@ -73,8 +75,10 @@ class TorrentClient:
         self.piece_manager = PieceManager(
                     torrent,
                     enable_end_game_mode= enable_end_game_mode,
-                    enable_rarest_piece_first = enable_rarest_piece_first
+                    enable_rarest_piece_first = enable_rarest_piece_first,
+                    enable_bbs_plus=enable_bbs_plus
             )
+        
         self.peer_connection_manager = PeerConnectionManager(available_peers = self.available_peers, 
                 enable_optimistic_unchoking = enable_optimistic_unchoking,
                 enable_anti_snubbing = enable_anti_snubbing,
@@ -130,21 +134,26 @@ class TorrentClient:
                         self.available_peers.put_nowait(peer)
             else:
                 await asyncio.sleep(5)
-        self.stop()
+        await self.stop()
 
     def _empty_queue(self):
         while not self.available_peers.empty():
             self.available_peers.get_nowait()
 
-    def stop(self):
+    async def stop(self):
         """
-        Stop the download or seeding process.
+        Stop the download or seeding process. 
+        (But we can still wait for others's INTERESTED or REQUEST message)
         """
+        
+        logging.debug("Waiting for other peers's INTERESTED or REQUEST messages for {} seconds"
+                      .format(TorrentClient.MAX_CONNECTION_KEEP_ALIVE_TIME))
+        await asyncio.sleep(TorrentClient.MAX_CONNECTION_KEEP_ALIVE_TIME)
         self.abort = True
         for peer in self.peers:
             peer.stop()
         self.piece_manager.close()
-        self.tracker.close()
+        await self.tracker.close()
         self.peer_connection_manager.close()
 
     def _on_block_retrieved(self, peer_id, piece_index, block_offset, data, enable_end_game_mode = False):
@@ -210,6 +219,7 @@ class PeerConnectionManager:
     enable_choking_strategy = None
     enable_optimistic_unchoking = None
     enable_end_game_mode = None
+    in_end_game_mode = False
 
     def __init__(self, available_peers, 
                 enable_optimistic_unchoking,
@@ -236,7 +246,8 @@ class PeerConnectionManager:
         PeerConnectionManager.enable_anti_snubbing = enable_anti_snubbing
         PeerConnectionManager.enable_choking_strategy = enable_choking_strategy
         PeerConnectionManager.enable_end_game_mode = enable_end_game_mode
-                
+        
+
         self.thread = threading.Thread(target=self._optimistic_unchoking_choice, args=()) 
         self.thread.daemon = True
         self.thread.start()
@@ -246,7 +257,7 @@ class PeerConnectionManager:
         self.thread.join()
 
     def _optimistic_unchoking_choice(self):
-        if not PeerConnectionManager.enable_optimistic_unchoking:
+        if not PeerConnectionManager.enable_optimistic_unchoking or PeerConnectionManager.in_end_game_mode:
             return
         while True:
             if self.num_of_registered_peer_connections < 3 or len(self.choked_peers) < 2:
@@ -275,7 +286,7 @@ class PeerConnectionManager:
         Accoding to the spec: BitTorrent assumes it is "snubbed" by that peer and doesn't upload to it except as an optimistic unchoke.
         This frequently results in more than one concurrent optimistic unchoke,
         """
-        if not PeerConnectionManager.enable_anti_snubbing:
+        if not PeerConnectionManager.enable_anti_snubbing or PeerConnectionManager.in_end_game_mode:
             return
         logging.debug("The peer with id {} has been snubbing me ".format(peer_id))
         #logging.debug("The peer with peer id {id} have been snugging on us. So remove it.".format(id = peer_id))
@@ -318,7 +329,15 @@ class PeerConnectionManager:
             if peer_id in self.choked_peers:
                 self.choked_peers.remove(peer_id)
             self.num_of_registered_peer_connections -= 1
-        
+    
+    def set_end_game_mode(self):
+        if not PeerConnectionManager.in_end_game_mode:
+            PeerConnectionManager.in_end_game_mode = True
+        for choked_peer in self.choked_peers:
+            self.peer_connection_pool[choked_peer].restart()
+            self.unchoked_peers.append(choked_peer)
+            self.choked_peers.remove(choked_peer)
+
     def peer_connection_bandwidth_test(self, peer_id, peer_ip_port, enable_end_game_mode):
         """
         Reciprocation and number of uploads capping is managed by 
@@ -327,13 +346,14 @@ class PeerConnectionManager:
           These four peers are referred to as downloaders, 
           because they are interested in downloading from the client."
         """
-        if not PeerConnectionManager.enable_choking_strategy:
+        if not PeerConnectionManager.enable_choking_strategy or PeerConnectionManager.in_end_game_mode:
             return None
         # bandwidth = httpstat.httpstat_test(
         #     server_ip= peer_ip_port.ip,
         #     server_port= peer_ip_port.port
         # )
-        bandwidth = self.blocks_already_sent[peer_id]
+        bandwidth = self.blocks_already_sent[peer_id] / max(list(self.blocks_already_sent.values()))
+        bandwidth *= 14
         # logging.debug("We have test the peer:{ip}:{port}, its bandwidth is {bandwidth}"
         #                 .format(ip = peer_ip_port.ip, port = peer_ip_port.port, bandwidth = bandwidth))
         
@@ -415,15 +435,29 @@ class Piece:
             return missing[0]
         return None
     
-    def remaining_blocks_in_piece(self):
+    def remaining_missing_blocks_in_piece(self):
         """
-        Get all the remaining blocks to be requested in this piece
+        Get all the remaining blocks to be requested in this piece.
+        And all the remaining blocks are set to be Pneding state afterwards
         """
         missing_blocks = [b for b in self.blocks if b.status is Block.Missing]
         if missing_blocks:
             for missing_block in missing_blocks:
                 missing_block.status = Block.Pending
             return missing_blocks
+        # logging.debug("All the remaining blocks to be requested in this piece are of length {}"
+        #               .format(len(missing_blocks)))
+        return []
+    
+    def remaining_pending_and_missing_blocks_in_piece(self):
+        """
+        Get all the remaining blocks that are pending or missing in this piece.
+        """
+        pending_or_missing_blocks = [b for b in self.blocks if b.status in [Block.Missing, Block.Pending]]
+        if pending_or_missing_blocks:
+            for pending_or_missing_block in pending_or_missing_blocks:
+                pending_or_missing_block.status = Block.Pending
+            return pending_or_missing_blocks
         # logging.debug("All the remaining blocks to be requested in this piece are of length {}"
         #               .format(len(missing_blocks)))
         return []
@@ -477,6 +511,14 @@ class Piece:
         blocks_data = [b.data for b in retrieved]
         return b''.join(blocks_data)
 
+    def __str__(self) -> str:
+        return """
+        piece_index: {piece_index} \n 
+        blocks: {blocks} \n
+        hash_value: {hash_value}
+        """.format(piece_index = self.index, hash_value = self.hash,
+                   blocks = list(map(lambda x: 'offset: {offset} status: {status} \n'
+                                     .format(offset = x.offset, status = x.status), self.blocks)))
 
 class PieceManager:
     """
@@ -489,11 +531,12 @@ class PieceManager:
     """
     enable_end_game_mode = None
     enable_rarest_piece_first = None
-
+    enable_bbs_plus = None
 
     def __init__(self, torrent, 
                 enable_end_game_mode = False,
-                enable_rarest_piece_first = False):
+                enable_rarest_piece_first = False,
+                enable_bbs_plus = False):
         
         self.torrent = torrent
         self.peers = {}
@@ -501,7 +544,7 @@ class PieceManager:
         self.missing_pieces = []
         self.ongoing_pieces = []
         self.have_pieces = []
-        self.max_pending_time = 60 * 1000  # 5 minutes
+        self.max_pending_time = 300 * 1000  # 5 minutes
         self.missing_pieces = self._initiate_pieces()
         self.total_pieces = len(torrent.pieces)
         self.end_game_mode_request = {}
@@ -510,6 +553,7 @@ class PieceManager:
 
         PieceManager.enable_end_game_mode = enable_end_game_mode
         PieceManager.enable_rarest_piece_first = enable_rarest_piece_first
+        PieceManager.enable_bbs_plus = enable_bbs_plus
 
     def _initiate_pieces(self) -> [Piece]:
         """
@@ -699,8 +743,17 @@ class PieceManager:
                 block_requests_in_end_game_mode += \
                     piece.blocks
 
-        logging.debug("All the blocks to be requested in end game mode are of {length}"
-                      .format(length = len(block_requests_in_end_game_mode)))
+        # if len(self.ongoing_pieces) == 1:
+        #     logging.debug("All the blocks to be requested in end game mode are of {length}. \n \
+        #                 and the ongoing pieces are of {ongoing}, the left unfinished: {left}, \n \
+        #                    the unfinied piece: {complete}, \n \
+        #                   the length of missing pieces: {missing}"
+        #                 .format(length = len(block_requests_in_end_game_mode),
+        #                         ongoing = len(self.ongoing_pieces),
+        #                         left = self.ongoing_pieces[0].remaining_pending_and_missing_blocks_in_piece(),
+        #                         complete = self.ongoing_pieces[0].is_complete(),
+        #                         missing = len(self.missing_pieces)
+        #                         ))
         
         for block_request_in_end_game_mode in block_requests_in_end_game_mode:
             assert(isinstance(block_request_in_end_game_mode, Block))
@@ -732,6 +785,7 @@ class PieceManager:
                                                      peer_id=peer_id,
                                                      mode = "End game mode" if enable_end_game_mode else "Normal mode"))
 
+
         # Remove from pending requests
         for index, request in enumerate(self.pending_blocks):
             if request['block'].piece == piece_index and \
@@ -741,6 +795,7 @@ class PieceManager:
 
         pieces = [p for p in self.ongoing_pieces if p.index == piece_index]
         piece = pieces[0] if pieces else None
+        
         if piece:
             block_received = piece.block_received(block_offset, data)
             if enable_end_game_mode:
@@ -762,6 +817,19 @@ class PieceManager:
                         .format(complete=complete,
                                 total=self.total_pieces,
                                 per=(complete/self.total_pieces)*100))
+                    
+                    if len(self.ongoing_pieces) == 1 and not self.ongoing_pieces[0].blocks:
+                        self.have_pieces.append(self.ongoing_pieces[0])
+                        self.ongoing_pieces.remove(self.ongoing_pieces[0])
+
+                        assert(len(self.have_pieces) == self.total_pieces)
+                        assert(len(self.missing_pieces) == 0)
+
+                        logging.info(
+                            '{total} / {total} pieces downloaded {per:.3f} %'
+                            .format(total=self.total_pieces,
+                                    per=100))
+                        
                 else:
                     logging.info('Discarding corrupt piece {index}'
                                  .format(index=piece.index))
@@ -798,8 +866,11 @@ class PieceManager:
         low (1 or 2 blocks) to minimize the overhead, 
         and if you randomize the blocks requested, there's a lower chance of downloading duplicates. 
         """
+        if PieceManager.enable_bbs_plus:
+            return True
         if not PieceManager.enable_end_game_mode:
             return False
+
         # When all pieces have been requested.
         if end_game_mode == 1:
             if len(self.missing_pieces) == self.total_pieces:
@@ -871,18 +942,22 @@ class PieceManager:
         """
         Go through the ongoing pieces and return all the remaining blocks to be
         requested or None if no block is left to be requested.
+        DEBUG: return all the missing blocks that are in ongoing pieces, but not all the pending blocks in ongoing pieces.
         """
         blocks_to_be_transmitted_in_ongoing_pieces = []
         for piece in self.ongoing_pieces:
             if self.peers[peer_id][piece.index]:
    
-                remaining_blocks_in_piece = piece.remaining_blocks_in_piece()
+                # remaining_blocks_in_piece = piece.remaining_missing_blocks_in_piece()
+                ## Chooseing all the pendind and missing blocks in the ongonnig pieces
+                remaining_blocks_in_piece = piece.remaining_pending_and_missing_blocks_in_piece()
                 blocks_to_be_transmitted_in_ongoing_pieces += remaining_blocks_in_piece
                 
                 for remaining_block_in_piece in remaining_blocks_in_piece:
-                    self.pending_blocks.append(
-                        {'block':remaining_block_in_piece, 'added':int(round(time.time()*1000))})
-                    
+                    if remaining_block_in_piece.status == Block.Missing:
+                        self.pending_blocks.append(
+                            {'block':remaining_block_in_piece, 'added':int(round(time.time()*1000))})
+                    ## Make sure every block in the pending blocks don;t conflict with each other
 
         # logging.debug("Blocks to be transmitted in {ongoing_pieces} are {len_blocks}"
         #               .format(ongoing_pieces = len(self.ongoing_pieces), 

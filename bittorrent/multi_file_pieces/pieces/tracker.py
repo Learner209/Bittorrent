@@ -24,8 +24,6 @@ from urllib.parse import urlencode
 
 from . import bencoding
 
-logging.basicConfig(level=logging.DEBUG)
-
 
 class TrackerResponse:
     """
@@ -169,8 +167,8 @@ class Tracker:
 
             return TrackerResponse(bencoding.Decoder(data).decode())
 
-    def close(self):
-        self.http_client.close()
+    async def close(self):
+        await self.http_client.close()
 
     def raise_for_error(self, tracker_response):
         """

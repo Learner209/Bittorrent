@@ -141,10 +141,15 @@ class PeerConnection:
                     if 'stopped' in self.my_state:
                         break
                     try:
-                        await asyncio.wait_for(self._interact_with_peer(message=message), timeout=5)
-                    except asyncio.TimeoutError:
+                        await asyncio.wait_for(self._interact_with_peer(message=message), timeout=10)
+                    except asyncio.TimeoutError: ## Have to Re-request in End-game-mode
+
+                        if 'end_game_mode' in self.my_state:
+                            await self._cancel_piece()
+                            logging.debug("This end-game-mode failed, so have to re-request: {}".format(self.remote_id))
+                            await self._request_piece_in_end_game_mode()
+
                         if not self.stalled:
-                            
                             self.peer_connection_manager.anti_snubbing_startegy(
                                 peer_id = self.remote_id
                             )
@@ -255,7 +260,11 @@ class PeerConnection:
             # TODO Add support for sending data
             logging.info('Ignoring the received Cancel message.')
         elif isinstance(message, Timeout):
-     
+            if 'end_game_mode' in self.my_state:
+                await self._cancel_piece()
+                logging.debug("This end-game-mode failed, so have to re-request: {}".format(self.remote_id))
+                chk = await self._request_piece_in_end_game_mode()
+
             self.peer_connection_manager.anti_snubbing_startegy(
                 peer_id = self.remote_id
             )
@@ -270,14 +279,15 @@ class PeerConnection:
                 elif 'pending_request' not in self.my_state:
                     if not self.piece_manager._is_suitable_to_enter_the_end_game_mode(peer_id = self.remote_id,
                                                                                     end_game_mode = 2):
-                    # if False:
                         chk = await self._request_piece()
+
                         if chk:
                             self.my_state.append('pending_request')
                     else:
                         chk = await self._request_piece_in_end_game_mode()
                         if chk:
                             self.my_state.append("end_game_mode")
+                            self.peer_connection_manager.set_end_game_mode()
                             logging.debug("We have officailly entered into End Game mode!")
 
 
@@ -481,7 +491,7 @@ class PeerStreamIterator:
 
     async def __anext__(self):
         try:
-            message = await asyncio.wait_for(self.anext(), timeout=5)
+            message = await asyncio.wait_for(self.anext(), timeout=10)
             return message
         except asyncio.exceptions.TimeoutError:
             logging.debug("This message have been snubbing us for all on time")
