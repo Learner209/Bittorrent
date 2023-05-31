@@ -53,7 +53,7 @@ class Torrent:
         if self.multi_file:
             name = self.meta_info[b'info'][b'name'].decode('utf-8')
             if not os.path.exists(name):
-                os.mkdir(name); 
+                os.mkdir(name)
             for file in self.meta_info[b'info'][b'files']:
                 curr_path = (b'/'.join(file[b'path'])).decode('utf-8')
                 curr_path = os.path.join(self.meta_info[b'info'][b'name'].decode('utf-8'), curr_path)
@@ -63,7 +63,7 @@ class Torrent:
                 TorrentFile(
                     self.meta_info[b'info'][b'name'].decode('utf-8'),
                     self.meta_info[b'info'][b'length']))
-
+        #print(self.meta_info)
     @property
     def announce(self) -> str:
         """

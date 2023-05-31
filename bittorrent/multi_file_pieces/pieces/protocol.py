@@ -61,12 +61,14 @@ class PeerConnection:
     instead.
     """
     IP_PORT = namedtuple("IP_PORT", ["ip", "port"])
+    
     def __init__(self, queue: Queue, info_hash,
                 peer_id, 
                 piece_manager,
                 on_block_cb, 
                 read_request_retrieved,
-                peer_connection_manager):
+                peer_connection_manager,
+                app):
         """
         Constructs a PeerConnection and add it to the asyncio event-loop.
 
@@ -97,6 +99,7 @@ class PeerConnection:
         # self.optimistic_unchoking_future = asyncio.ensure_future(piece_manager.optimistic_unchoking_choice())  # Start this worker
         self.stalled = False ## stalled means the prev. info has benn reserved
         self.ip_port = None
+        self.app = app
 
 
     async def _start(self):
@@ -105,18 +108,25 @@ class PeerConnection:
             self.ip_port = PeerConnection.IP_PORT(ip, port)
             logging.info('Got assigned peer with: {ip} at {port}'
                             .format(ip=ip, port = port))
+            # self.app.textbox.insert('Got assigned peer with: {ip} at {port}\n'
+            #                 .format(ip=ip, port = port))
+            self.app.add_text('Got assigned peer with: {ip} at {port} \n'
+                            .format(ip=ip, port = port))
             try:
                 # TODO For some reason it does not seem to work to open a new
                 # connection if the first one drops (i.e. second loop).
                 self.reader, self.writer = await asyncio.open_connection(
                     ip, port)
+                
                 logging.info('Connection open to peer: {ip}'.format(ip=ip))
-
+                self.app.add_text('Connection open to peer: {ip} \n'.format(ip=ip))
+                
                 # It's our responsibility to initiate the handshake.
                 self.buffer = await self._handshake()
 
                 self.peer_connection_manager.update_peer_connection_pool(peer_id = self.remote_id,
-                                                        peer_connection = self)
+                                                        peer_connection = self,
+                                                        ip_port = self.ip_port)
                 # TODO Add support for sending data
                 # Sending BitField is optional and not needed when client does
                 # not have any pieces. Thus we do not send any bitfield message
@@ -362,6 +372,12 @@ class PeerConnection:
                             block=block.offset,
                             length=block.length,
                             peer=self.remote_id))
+                self.app.add_text('Re-requesting expired block {block} for piece {piece} '
+                          'with length {length} bytes from peer {peer} in End Game mode\n'.format(
+                            piece=block.piece,
+                            block=block.offset,
+                            length=block.length,
+                            peer=self.remote_id))
                 self.writer.write(message)
                 await self.writer.drain()
             return True
@@ -398,6 +414,12 @@ class PeerConnection:
                             block=block.offset,
                             length=block.length,
                             peer=self.remote_id))
+                self.app.add_text('Requesting block {block} for piece {piece} '
+                          'of {length} bytes from peer {peer} in End Game mode \n'.format(
+                            piece=block.piece,
+                            block=block.offset,
+                            length=block.length,
+                            peer=self.remote_id))
                 self.writer.write(message)
                 await self.writer.drain()
             return True
@@ -428,7 +450,7 @@ class PeerConnection:
         # from the peer match the peer_id received from the tracker.
         self.remote_id = response.peer_id
         logging.info('Handshake with peer was successful')
-
+        self.app.add_text('Handshake with peer: {} was successful \n'.format(self.remote_id))
         # We need to return the remaining buffer data, since we might have
         # read more bytes then the size of the handshake message and we need
         # those bytes to parse the next message.
@@ -437,7 +459,8 @@ class PeerConnection:
     async def _send_interested(self):
         
         message = Interested()
-        logging.debug('Sending message: {type}'.format(type=message))
+        logging.debug('Sending message: {type} to peer: {id}'.format(type=message, id = self.remote_id))
+        self.app.add_text('Sending message: {type} to peer: {id} \n'.format(type=message, id = self.remote_id))
         self.writer.write(message.encode())
         await self.writer.drain()
 
@@ -494,7 +517,7 @@ class PeerStreamIterator:
             message = await asyncio.wait_for(self.anext(), timeout=10)
             return message
         except asyncio.exceptions.TimeoutError:
-            logging.debug("This message have been snubbing us for all on time")
+            logging.debug("This peer connection times out: anti-snugging strategy is executed...")
             return Timeout()
 
     async def anext(self):

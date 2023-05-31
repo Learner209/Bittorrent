@@ -37,6 +37,7 @@ from pieces.tracker import Tracker
 MAX_PEER_CONNECTIONS = 40
 
 
+
 class TorrentClient:
     """
     The torrent client is the local peer that holds peer-to-peer
@@ -54,6 +55,8 @@ class TorrentClient:
     """
     enable_DHT_network = None
     MAX_CONNECTION_KEEP_ALIVE_TIME = 120 # 2 minutes
+    app = None
+
     def __init__(self,
                 torrent,
                 enable_optimistic_unchoking,
@@ -62,10 +65,19 @@ class TorrentClient:
                 enable_end_game_mode,
                 enable_rarest_piece_first,
                 enable_bbs_plus,
-                enabel_dht_network
+                enabel_dht_network,
+                app
                 ):
         
+        # self.appthread = threading.Thread(target=app_start, args=[app])
+        # self.appthread.daemon = True
+        # self.appthread.start()
+        
+        TorrentClient.app = app
+        # print(app)
         self.tracker = Tracker(torrent)
+        TorrentClient.app.meta_info = torrent.meta_info
+        TorrentClient.app.tracker_info = self.tracker.torrent
         # The list of potential peers is the work queue, consumed by the
         # PeerConnections
         self.available_peers = Queue()
@@ -84,7 +96,8 @@ class TorrentClient:
                     torrent,
                     enable_end_game_mode= enable_end_game_mode,
                     enable_rarest_piece_first = enable_rarest_piece_first,
-                    enable_bbs_plus=enable_bbs_plus
+                    enable_bbs_plus=enable_bbs_plus,
+                    app = app
             )
         
         self.peer_connection_manager = PeerConnectionManager(available_peers = self.available_peers, 
@@ -92,6 +105,7 @@ class TorrentClient:
                 enable_anti_snubbing = enable_anti_snubbing,
                 enable_choking_strategy = enable_choking_strategy,
                 enable_end_game_mode = enable_end_game_mode,
+                app = app
             )
         
         
@@ -113,7 +127,8 @@ class TorrentClient:
                                     self.piece_manager,
                                     peer_connection_manager = self.peer_connection_manager,
                                     on_block_cb= self._on_block_retrieved,
-                                    read_request_retrieved = self._read_request_retrieved
+                                    read_request_retrieved = self._read_request_retrieved,
+                                    app = PeerConnectionManager.app
                                     )
                         for _ in range(MAX_PEER_CONNECTIONS)]
 
@@ -137,7 +152,7 @@ class TorrentClient:
                     first=previous if previous else False,
                     uploaded=self.piece_manager.bytes_uploaded,
                     downloaded=self.piece_manager.bytes_downloaded)
-
+                TorrentClient.app.tracker_response = response
                 # logging.debug(response)
                 if response:
                     previous = current
@@ -191,6 +206,7 @@ class TorrentClient:
         self.piece_manager.close()
         await self.tracker.close()
         self.peer_connection_manager.close()
+        # self.app.close()
 
     def _on_block_retrieved(self, peer_id, piece_index, block_offset, data, enable_end_game_mode = False):
         """
@@ -256,6 +272,8 @@ class PeerConnectionManager:
     enable_optimistic_unchoking = None
     enable_end_game_mode = None
     in_end_game_mode = False
+    app = None
+
 
     def __init__(self,
                 available_peers, 
@@ -263,6 +281,7 @@ class PeerConnectionManager:
                 enable_anti_snubbing,
                 enable_choking_strategy,
                 enable_end_game_mode,
+                app
                 ) -> None:
         self.avaiable_peers = available_peers
         self.peer_connection_pool = {}
@@ -284,7 +303,7 @@ class PeerConnectionManager:
         PeerConnectionManager.enable_anti_snubbing = enable_anti_snubbing
         PeerConnectionManager.enable_choking_strategy = enable_choking_strategy
         PeerConnectionManager.enable_end_game_mode = enable_end_game_mode
-        
+        PeerConnectionManager.app = app
 
         self.thread = threading.Thread(target=self._optimistic_unchoking_choice, args=()) 
         self.thread.daemon = True
@@ -317,6 +336,8 @@ class PeerConnectionManager:
 
             logging.debug("We have chosen the optimstic unchoking objective: {}"
                         .format(self.optimistic_unchoking_random_choice))
+            PeerConnectionManager.app.add_text("The optimistic unchoking strategy opens the connection to peer: {}\n"
+                        .format(self.optimistic_unchoking_random_choice))
             time.sleep(30)
 
     def anti_snubbing_startegy(self, peer_id):
@@ -328,6 +349,7 @@ class PeerConnectionManager:
         if not PeerConnectionManager.enable_anti_snubbing or PeerConnectionManager.in_end_game_mode:
             return
         logging.debug("The peer with id {} has been snubbing me ".format(peer_id))
+        PeerConnectionManager.app.add_text("The connection with peer: {} times out, the anti snubbing strategy takes effect.\n".format(peer_id))
         #logging.debug("The peer with peer id {id} have been snugging on us. So remove it.".format(id = peer_id))
         self.peer_connection_pool[peer_id].stop()
         self.unchoked_peers.remove(peer_id)
@@ -346,16 +368,19 @@ class PeerConnectionManager:
 
             logging.debug("The anti-snugging strategy have chosen {} to be the concurrent optimistic unchoke"
                         .format(self.optimistic_unchoking_random_choice))
+            PeerConnectionManager.app.add_text("The anti snubbing strategy have chosen {} to be the concurrent optimistic unchoke.\n"
+                        .format(self.optimistic_unchoking_random_choice))
 
 
 
-    def update_peer_connection_pool(self, peer_id, peer_connection):
+    def update_peer_connection_pool(self, peer_id, peer_connection, ip_port):
         if peer_id not in self.peer_connection_pool.keys():
             self.peer_connection_pool[peer_id] = peer_connection
             self.peer_connection_bandwidth[peer_id] = 1
             self.num_of_registered_peer_connections += 1
             self.blocks_already_sent[peer_id] = 0
             self.unchoked_peers.append(peer_id)
+            PeerConnectionManager.app.add_peer_switch(peer_id = peer_id, ip_port = ip_port)
             # logging.debug("Peer with peer id :{id}  have successfully entered the process".format(id=peer_id))
         
     def unregister_peer_connection(self, peer_id):
@@ -368,6 +393,7 @@ class PeerConnectionManager:
             if peer_id in self.choked_peers:
                 self.choked_peers.remove(peer_id)
             self.num_of_registered_peer_connections -= 1
+            
     
     def set_end_game_mode(self):
         if not PeerConnectionManager.in_end_game_mode:
@@ -571,13 +597,21 @@ class PieceManager:
     enable_end_game_mode = None
     enable_rarest_piece_first = None
     enable_bbs_plus = None
-
-    def __init__(self, torrent, 
+    app = None
+    def __init__(self, torrent, app,
                 enable_end_game_mode = False,
                 enable_rarest_piece_first = False,
-                enable_bbs_plus = False):
+                enable_bbs_plus = False,
+                ):
         
+        PieceManager.enable_end_game_mode = enable_end_game_mode
+        PieceManager.enable_rarest_piece_first = enable_rarest_piece_first
+        PieceManager.enable_bbs_plus = enable_bbs_plus
+        PieceManager.app = app
+
         self.torrent = torrent
+        self.overall_blocks = 0
+        self.complete_blocks = 0
         self.peers = {}
         self.pending_blocks = []
         self.missing_pieces = []
@@ -588,11 +622,11 @@ class PieceManager:
         self.total_pieces = len(torrent.pieces)
         self.end_game_mode_request = {}
         self.end_game_cancelled = {}
+        
         self.fd = os.open(self.torrent.output_file,  os.O_RDWR | os.O_CREAT)
+        logging.warning("The app is {}".format(app))
+        
 
-        PieceManager.enable_end_game_mode = enable_end_game_mode
-        PieceManager.enable_rarest_piece_first = enable_rarest_piece_first
-        PieceManager.enable_bbs_plus = enable_bbs_plus
 
     def _initiate_pieces(self) -> [Piece]:
         """
@@ -603,6 +637,7 @@ class PieceManager:
         pieces = []
         total_pieces = len(torrent.pieces)
         logging.debug("Total number of the pieces are {0}".format(total_pieces))
+        PieceManager.app.add_text("Total number of the pieces are {0} \n".format(total_pieces))
         std_piece_blocks = math.ceil(torrent.piece_length / REQUEST_SIZE)
 
         for index, hash_value in enumerate(torrent.pieces):
@@ -626,7 +661,9 @@ class PieceManager:
                     last_block = blocks[-1]
                     last_block.length = last_length % REQUEST_SIZE
                     blocks[-1] = last_block
+            self.overall_blocks += len(blocks)
             pieces.append(Piece(index, blocks, hash_value))
+            
         return pieces
 
     def close(self):
@@ -823,13 +860,18 @@ class PieceManager:
                                                      piece_index=piece_index,
                                                      peer_id=peer_id,
                                                      mode = "End game mode" if enable_end_game_mode else "Normal mode"))
-
+        PieceManager.app.add_text('Received block {block_offset} for piece {piece_index} '
+                      'from peer {peer_id}: Mode: {mode} \n'.format(block_offset=block_offset,
+                                                     piece_index=piece_index,
+                                                     peer_id=peer_id,
+                                                     mode = "End game mode" if enable_end_game_mode else "Normal mode"))
 
         # Remove from pending requests
         for index, request in enumerate(self.pending_blocks):
             if request['block'].piece == piece_index and \
                request['block'].offset == block_offset:
                 del self.pending_blocks[index]
+                self.complete_blocks += 1
                 break
 
         pieces = [p for p in self.ongoing_pieces if p.index == piece_index]
@@ -837,6 +879,7 @@ class PieceManager:
         
         if piece:
             block_received = piece.block_received(block_offset, data)
+            PieceManager.app.progressbar_2.set(self.complete_blocks / self.overall_blocks)
             if enable_end_game_mode:
                 self.blocks_requests_to_be_cancelled(
                     block_received=block_received,
@@ -856,7 +899,14 @@ class PieceManager:
                         .format(complete=complete,
                                 total=self.total_pieces,
                                 per=(complete/self.total_pieces)*100))
+                    PieceManager.app.add_text('{complete} / {total} pieces downloaded {per:.3f} % \n'
+                        .format(complete=complete,
+                                total=self.total_pieces,
+                                per=(complete/self.total_pieces)*100))
+                    PieceManager.app.progressbar_1.set(complete/self.total_pieces)
+                    #logging.info("We set the progress aba:")
                     
+
                     if len(self.ongoing_pieces) == 1 and not self.ongoing_pieces[0].blocks:
                         self.have_pieces.append(self.ongoing_pieces[0])
                         self.ongoing_pieces.remove(self.ongoing_pieces[0])
@@ -868,6 +918,11 @@ class PieceManager:
                             '{total} / {total} pieces downloaded {per:.3f} %'
                             .format(total=self.total_pieces,
                                     per=100))
+                        PieceManager.app.add_text('{total} / {total} pieces downloaded {per:.3f} %\n'
+                            .format(total=self.total_pieces,
+                                    per=100))
+                        PieceManager.app.progressbar_1.set(1)
+                        PieceManager.app.progressbar_2.set(1)
                         
                 else:
                     logging.info('Discarding corrupt piece {index}'
@@ -880,7 +935,8 @@ class PieceManager:
             if having_pieces:
                 logging.debug("The piece we just received is in the already complete piece with index {piece_index}"
                                 .format(piece_index = having_pieces[0].index))
-            
+                PieceManager.app.add_text("The piece just received is in the already completed piece with index {piece_index} \n"
+                                .format(piece_index = having_pieces[0].index))
             return None
 
     def read_request(self, peer_id, piece_index, block_offset_within_a_piece, required_data_length):
@@ -916,6 +972,8 @@ class PieceManager:
                 assert(len(self.ongoing_pieces) + len(self.have_pieces) == self.total_pieces)
                 logging.debug("End game mode has been enabled because all {piece_length} pieces have all been requested"
                               .format(piece_length = self.total_pieces))
+                PieceManager.app.add_text("End game mode has been enabled because all {piece_length} pieces have all been requested. \n"
+                              .format(piece_length = self.total_pieces))
                 return True
             else:
                 return False
@@ -933,7 +991,8 @@ class PieceManager:
             if numbers_of_blocks_left < numbers_of_blocks_in_transit:
                 logging.debug("End game mode has been enabled because there are {left} left blocks and {transit} blocks in transit"
                               .format(left = numbers_of_blocks_left, transit = numbers_of_blocks_in_transit))
-                
+                PieceManager.app.add_text("End game mode has been enabled because there are {left} left blocks and {transit} blocks in transit. \n"
+                              .format(left = numbers_of_blocks_left, transit = numbers_of_blocks_in_transit))
             return True if numbers_of_blocks_left < numbers_of_blocks_in_transit else False
         else:
             logging.exception("Undefined End-Game mode {} has been chosen !".format(end_game_mode))
@@ -953,6 +1012,10 @@ class PieceManager:
                 if request['added'] + self.max_pending_time < current:
                     logging.info('Re-requesting block {block} for '
                                  'piece {piece}'.format(
+                                    block=request['block'].offset,
+                                    piece=request['block'].piece))
+                    PieceManager.app.add_text('Re-requesting block {block} for '
+                                 'piece {piece}. \n'.format(
                                     block=request['block'].offset,
                                     piece=request['block'].piece))
                     # Reset expiration timer
@@ -1025,7 +1088,10 @@ class PieceManager:
 
         if len(piece_count) == 0:
             return None
+        
         rarest_piece = min(piece_count, key=lambda p: piece_count[p])
+        logging.debug("Rarest piece first startegy: The rarest piece: {} has been chosen.".format(rarest_piece.index))
+        PieceManager.app.add_text("Rarest piece first startegy: The rarest piece: {} has been chosen. \n".format(rarest_piece.index))
         self.missing_pieces.remove(rarest_piece)
         self.ongoing_pieces.append(rarest_piece)
         return rarest_piece

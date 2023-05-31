@@ -18,14 +18,16 @@
 import argparse
 import asyncio
 import signal
+import time
 import logging
 import os
+import threading
 
 from concurrent.futures import CancelledError
 from pieces.magnet2torrent import magnet2torrent
 from pieces.torrent import Torrent
 from pieces.client import TorrentClient
-
+from pieces.tkinter_gui.gui import App
 
 def main():
     handler = logging.StreamHandler()
@@ -112,62 +114,127 @@ def main():
         help="Whether use DHT(Distributed Hash Table) extension.",
     )
     
+    parser.add_argument(
+        "-g",
+        "--gui",
+        action='store_true',
+        default=False,
+        help="Whether to use the graphical application",
+    )
 
     args = parser.parse_args()
-    if args.verbose:
-        logging.basicConfig(filename='logfile.log', level=logging.DEBUG)
-
-    if args.magnet_link:
-        filename = magnet2torrent(mag_link=args.magnet_link)
-        current_dir = os.path.dirname(__file__)
-        args.torrent = os.path.join(current_dir, filename)
-        logging.info("The path of the torrent file from the magnet link url is: {path}"\
-                     .format(path = args.torrent))
-
-    logging.debug("The optimistic-unchoking strategy: {}\n \
-                  The anti-snubbing strategy: {} \n \
-                  The choking strategy: {}\n \
-                  The end-game strategy:{}\n \
-                  The rarset piece frist strategy:{}\n \
-                  The bbs-plus optimzation:{} \n \
-                  The DHT network registration:{}"
-                  .format("On" if args.optimistic_unchoking == True else "Off",
-                          "On" if args.anti_snubbing == True else "Off",
-                          "On" if args.choking_strategy == True else "Off",
-                          "On" if args.end_game_mode == True else "Off",
-                          "On" if args.rarest_piece_first == True else "Off",
-                          "On" if args.bbs_plus == True else "Off",
-                          "On" if args.dht == True else "Off"))
-
-    loop = asyncio.get_event_loop()
-
-    client = TorrentClient(
-                torrent = Torrent(args.torrent),
-                enable_optimistic_unchoking = True if args.optimistic_unchoking == True else False,
-                enable_anti_snubbing = True if args.anti_snubbing == True else False,
-                enable_choking_strategy = True if args.choking_strategy == True else False,
-                enable_end_game_mode = True if args.end_game_mode == True else False,
-                enable_rarest_piece_first = True if args.rarest_piece_first == True else False,
-                enable_bbs_plus= True if args.bbs_plus == True else False,
-                enabel_dht_network=True if args.dht == True else False
-                )
     
-    if args.port is not None:
-        port = args.port
+    if args.gui:
+            
+        app = App(
+            enable_optimistic_unchoking = False,
+            enable_anti_snubbing = False,
+            enable_choking_strategy = False,
+            enable_end_game_mode = False,
+            enable_rarest_piece_first = False,
+            enable_bbs_plus= False,
+            enabel_dht_network=False
+        )
+        def _(app):
+            #print(2)
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            while True:
+                time.sleep(3)
+                if app.torrent_client_mode:
+                    # print(torrent_path)
+                    
+                    torrent_path = app.entry.get()
+                    if isinstance(torrent_path, str) and torrent_path.startswith('magnet'):
+                        filename = magnet2torrent(mag_link=torrent_path)
+                        current_dir = os.path.dirname(__file__)
+                        torrent_path = os.path.join(current_dir, filename)
+                        logging.info("The path of the torrent file from the magnet link url is: {path}"\
+                                    .format(path = torrent_path))
+                        app.add_text("The path of the torrent file from the magnet link url is: {path}"\
+                                    .format(path = torrent_path))
+
+                    if isinstance(torrent_path, str) and os.path.exists(torrent_path) and torrent_path.endswith('.torrent'):
+                     
+                        client = TorrentClient(
+                                    torrent = Torrent(torrent_path),
+                                    enable_optimistic_unchoking = True if app.checkbox_1.get() == 1 else False,
+                                    enable_anti_snubbing = app.checkbox_2.get(),
+                                    enable_choking_strategy = app.checkbox_1.get(),
+                                    enable_end_game_mode = app.checkbox_4.get(),
+                                    enable_rarest_piece_first = app.checkbox_3.get(),
+                                    enable_bbs_plus= app.checkbox_5.get(),
+                                    enabel_dht_network=app.checkbox_6.get(),
+                                    app = app
+                                    )
+                        
+                        app.add_text("The optimistic-unchoking strategy: {}\n \
+                                        The anti-snubbing strategy: {} \n \
+                                        The choking strategy: {}\n \
+                                        The end-game strategy:{}\n \
+                                        The rarset piece frist strategy:{}\n \
+                                        The bbs-plus optimzation:{} \n \
+                                        The DHT network registration:{}"
+                                        .format("On" if app.checkbox_1.get() else "Off",
+                                                "On" if app.checkbox_2.get() else "Off",
+                                                "On" if app.checkbox_1.get() else "Off",
+                                                "On" if app.checkbox_4.get() else "Off",
+                                                "On" if app.checkbox_3.get() else "Off",
+                                                "On" if app.checkbox_5.get() else "Off",
+                                                "On" if app.checkbox_6.get() else "Off"))
+                        
+                        task = loop.create_task(client.start(port=None))
+
+                        try:
+                            loop.run_until_complete(task)
+                        except CancelledError:
+                            logging.warning('Event loop was canceled')
+                            break
+                        except Exception:
+                            break
+                    else:
+                        app.add_text("The torrent path: {} is invalid. \n".format(app.entry.get()))
+                        app.torrent_client_mode = False
+
+        clientThread = threading.Thread(target=_, args=[app])
+        clientThread.daemon = True
+        clientThread.start()
+        try:
+            app.mainloop()
+            
+            # app.quit()
+            clientThread.join()
+        except Exception:
+            app.quit()
+            app.destroy()
+
     else:
-        port = None
-    task = loop.create_task(client.start(port=port))
+        if args.verbose:
+            logging.basicConfig(filename='logfile.log', level=logging.DEBUG)
 
-    def signal_handler(*_):
-        logging.info('Exiting, please wait until everything is shutdown...')
-        client.stop()
-        task.cancel()
+        if args.magnet_link:
+            filename = magnet2torrent(mag_link=args.magnet_link)
+            current_dir = os.path.dirname(__file__)
+            args.torrent = os.path.join(current_dir, filename)
+            logging.info("The path of the torrent file from the magnet link url is: {path}"\
+                        .format(path = args.torrent))
 
-    signal.signal(signal.SIGINT, signal_handler)
+        logging.debug("The optimistic-unchoking strategy: {}\n \
+                    The anti-snubbing strategy: {} \n \
+                    The choking strategy: {}\n \
+                    The end-game strategy:{}\n \
+                    The rarset piece frist strategy:{}\n \
+                    The bbs-plus optimzation:{} \n \
+                    The DHT network registration:{}"
+                    .format("On" if args.optimistic_unchoking == True else "Off",
+                            "On" if args.anti_snubbing == True else "Off",
+                            "On" if args.choking_strategy == True else "Off",
+                            "On" if args.end_game_mode == True else "Off",
+                            "On" if args.rarest_piece_first == True else "Off",
+                            "On" if args.bbs_plus == True else "Off",
+                            "On" if args.dht == True else "Off"))
+        logging.warning("Not implemnted yet...")
 
-    try:
-        loop.run_until_complete(task)
-    except CancelledError:
-        logging.warning('Event loop was canceled')
-
-
+    
+            

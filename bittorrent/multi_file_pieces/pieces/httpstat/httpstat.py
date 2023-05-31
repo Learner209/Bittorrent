@@ -127,6 +127,6 @@ def _httpstat(server_ip, server_port):
 
 if __name__ == '__main__':
 
-    speed = httpstat_test(server_ip= '80.78.21.111', server_port= 53463
+    speed = httpstat_test(server_ip= '45.95.238.144', server_port= 6995
                      )
     print(speed)
