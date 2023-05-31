@@ -14,6 +14,8 @@ from tkinter.messagebox import showinfo
 from ..mktorrent import python_wrapper
 import os
 
+# /home/liliu/Desktop/bittorrent/multi_file_pieces/debian.torrent
+
 
 class App(customtkinter.CTk):
     IP_PORT_ID = namedtuple("IP_PORT_ID", ["ip", "port", "id"])
@@ -194,26 +196,37 @@ class App(customtkinter.CTk):
 
         self.progressbar_1 = customtkinter.CTkProgressBar(self.slider_progressbar_frame,
                                                           progress_color="#006400",
-                                                          fg_color="#d3d3d3")
-        self.progressbar_1.grid(row=1, column=0, padx=(20, 10), pady=(10, 10), sticky="ew")
-        #self.progressbar_1['maximum'] = 100
-        #self.progressbar_1.configure(mode="indeterminate")
-        #self.progressbar_1['value'] = 0
+                                                          fg_color="#d3d3d3",\
+                                                          )
+        self.progressbar_1.grid(row=1, column=0, padx=(20, 45), pady=(10, 10), sticky="ew")
+        self.progressbar_1_label = customtkinter.CTkLabel(self.slider_progressbar_frame,
+                                                 text="{} %".format(0), 
+                                                 font=customtkinter.CTkFont(size=20, weight="normal", family="Arial"),
+                                                 )
+        self.progressbar_1_label.grid(row=1, column=1, padx=(2, 2), pady=(10, 10), sticky="ew")
+       
         self.progressbar_1.set(0)
 
         self.progressbar_2 = customtkinter.CTkProgressBar(self.slider_progressbar_frame,
                                                           progress_color="#006400",
                                                           fg_color="#d3d3d3")
-        self.progressbar_2.grid(row=2, column=0, padx=(20, 10), pady=(10, 10), sticky="ew")
+        self.progressbar_2.grid(row=2, column=0, padx=(20, 45), pady=(10, 10), sticky="ew")
+
+        self.progressbar_2_label = customtkinter.CTkLabel(self.slider_progressbar_frame,
+                                                 text="{} %".format(0), 
+                                                 font=customtkinter.CTkFont(size=20, weight="normal", family="Arial"),
+                                                 )
+        self.progressbar_2_label.grid(row=2, column=1, padx=(2, 2), pady=(10, 10), sticky="ew")
+
         self.progressbar_2.set(0)
 
 
         self.slider_1 = customtkinter.CTkSlider(self.slider_progressbar_frame, from_=0, to=1, number_of_steps=4)
         self.slider_1.grid(row=3, column=0, padx=(20, 10), pady=(10, 10), sticky="ew")
         self.slider_2 = customtkinter.CTkSlider(self.slider_progressbar_frame, orientation="vertical")
-        self.slider_2.grid(row=0, column=1, rowspan=5, padx=(10, 10), pady=(10, 10), sticky="ns")
+        self.slider_2.grid(row=0, column=2, rowspan=5, padx=(10, 10), pady=(10, 10), sticky="ns")
         self.progressbar_3 = customtkinter.CTkProgressBar(self.slider_progressbar_frame, orientation="vertical")
-        self.progressbar_3.grid(row=0, column=2, rowspan=5, padx=(10, 20), pady=(10, 10), sticky="ns")
+        self.progressbar_3.grid(row=0, column=3, rowspan=5, padx=(10, 20), pady=(10, 10), sticky="ns")
 
         # create scrollable frame
         self.scrollable_frame = customtkinter.CTkScrollableFrame(self, label_text="Peer connection")

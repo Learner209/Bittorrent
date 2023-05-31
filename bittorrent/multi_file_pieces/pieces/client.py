@@ -417,7 +417,10 @@ class PeerConnectionManager:
         #     server_ip= peer_ip_port.ip,
         #     server_port= peer_ip_port.port
         # )
-        bandwidth = self.blocks_already_sent[peer_id] / max(list(self.blocks_already_sent.values()))
+        if max(list(self.blocks_already_sent.values())) != 0:
+            bandwidth = self.blocks_already_sent[peer_id] / max(list(self.blocks_already_sent.values()))
+        else:
+            bandwidth = 0.01
         bandwidth *= 14
         # logging.debug("We have test the peer:{ip}:{port}, its bandwidth is {bandwidth}"
         #                 .format(ip = peer_ip_port.ip, port = peer_ip_port.port, bandwidth = bandwidth))
@@ -871,7 +874,7 @@ class PieceManager:
             if request['block'].piece == piece_index and \
                request['block'].offset == block_offset:
                 del self.pending_blocks[index]
-                self.complete_blocks += 1
+                # self.complete_blocks += 1
                 break
 
         pieces = [p for p in self.ongoing_pieces if p.index == piece_index]
@@ -879,7 +882,10 @@ class PieceManager:
         
         if piece:
             block_received = piece.block_received(block_offset, data)
+            if block_received is not None:
+                self.complete_blocks += 1
             PieceManager.app.progressbar_2.set(self.complete_blocks / self.overall_blocks)
+            PieceManager.app.progressbar_2_label.configure(text = "{} %".format(round(self.complete_blocks / self.overall_blocks * 100)))
             if enable_end_game_mode:
                 self.blocks_requests_to_be_cancelled(
                     block_received=block_received,
@@ -904,6 +910,8 @@ class PieceManager:
                                 total=self.total_pieces,
                                 per=(complete/self.total_pieces)*100))
                     PieceManager.app.progressbar_1.set(complete/self.total_pieces)
+                    PieceManager.app.progressbar_1_label.configure(text = "{} %".format(round(complete/self.total_pieces * 100)))
+                    #logging.debug("The 1111111111111111111 is {}, {}".format(self.complete_blocks,self.overall_blocks))
                     #logging.info("We set the progress aba:")
                     
 
@@ -922,7 +930,9 @@ class PieceManager:
                             .format(total=self.total_pieces,
                                     per=100))
                         PieceManager.app.progressbar_1.set(1)
+                        PieceManager.app.progressbar_1_label.configure(text = "100 %")
                         PieceManager.app.progressbar_2.set(1)
+                        PieceManager.app.progressbar_2_label.configure(text = "100 %")
                         
                 else:
                     logging.info('Discarding corrupt piece {index}'
