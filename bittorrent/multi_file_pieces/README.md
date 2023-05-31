@@ -2,7 +2,6 @@
 
 This repo implements the *Bittorrent* with munificient features, including distributed hash table network, choking and optimstic unchoking strategy, end game, rarest piece first, anti-snubbing. And the bittorrent peer also supports upload, magnet link conversion and so on.
 
-![tracker visualization](../../img/img.png)
 
 ### Submodules:
 
@@ -41,7 +40,6 @@ options:
 ### 2. *multi-file-pieces*
 Basic test: `python pieces.py -t ubuntu.torrent` to download the $.torrent$ file.([3],[4],[5],[6],[7],[8])
 
-![visual pieces](../../img/2.png)
 
 Run `python pieces.py -h` to say more optinal choices.
 ```
