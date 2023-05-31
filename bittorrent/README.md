@@ -1,10 +1,36 @@
-## Bittorrent
+# Bittorrent
 
 This repo implements the *Bittorrent* with munificient features, including distributed hash table network, choking and optimstic unchoking strategy, end game, rarest piece first, anti-snubbing. And the bittorrent peer also supports upload, magnet link conversion and so on.
 
-![tracker visualization](img/img.png)
+### Notice:
+
+More updates on the GUI visuallizations:
+
+Usage:
+
+```
+cd bittorrent/multi_file_pieces
+python3 piecse.py -g
+```
+
+Downloading the torrent:
+![](https://notes.sjtu.edu.cn/uploads/upload_1d3746391aaad31384e2ab2af16be4c4.png)
+Cheking the basic elements of torrent, tracker, peer connections(Also has Dark, Light UI style):
+![](https://notes.sjtu.edu.cn/uploads/upload_6b07b19c43b0c90bd113d4b18fd92743.png)
+Selecting file to be torrented in local directory:
+![](https://notes.sjtu.edu.cn/uploads/upload_ceb1c6547d923403a478e7232af9a941.png)
+
+Setting the name of the torrent:
+![](https://notes.sjtu.edu.cn/uploads/upload_43a876fe41dff3a95424ba66120f87ed.png)
+
+Successfully make torrent showup:
+![](https://notes.sjtu.edu.cn/uploads/upload_6204357ded04a0272cb5741a2309a29a.png)
+
+
 
 ### Submodules:
+
+![](https://notes.sjtu.edu.cn/uploads/upload_cde44ab90bba4d46443445e793bf05a4.png)
 
 ### 1. *mktorrent*
    make torrent with optional choices.[9]
@@ -41,7 +67,6 @@ options:
 ### 2. *multi-file-pieces*
 Basic test: `python pieces.py -t ubuntu.torrent` to download the $.torrent$ file.([3],[4],[5],[6],[7],[8])
 
-![visual pieces](img/2.png)
 
 Run `python pieces.py -h` to say more optinal choices.
 ```
@@ -114,5 +139,4 @@ pretending your client is behind RestrictNAT.
 [7]:https://snarky.ca/how-the-heck-does-async-await-work-in-python-3-5/
 [8]:https://github.com/danfolkes/Magnet2Torrent.git
 [9]:https://en.wikipedia.org/wiki/Bencode
-
 
