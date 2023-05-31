@@ -1,124 +1,117 @@
-# pieces
+## Bittorrent
 
-An experimental BitTorrent client implemented in Python 3 using asyncio.
+This repo implements the *Bittorrent* with munificient features, including distributed hash table network, choking and optimstic unchoking strategy, end game, rarest piece first, anti-snubbing. And the bittorrent peer also supports upload, magnet link conversion and so on.
 
-The client is not a practical BitTorrent client, it lacks too many
-features to really be useful. It was implemented for fun in order to
-learn more about BitTorrent as well as Python's asyncio library.
+![tracker visualization](bittorrent/img/img.png)
 
-See http://markuseliasson.se/article/bittorrent-in-python/ for a walkthrough
-on the BitTorrent protocol and how pieces works under the hood.
+### Submodules:
 
-The client currently only support downloading of data, although adding
-the remaining features regarding seeding and multi-file should not be
-that hard.
+### 1. *mktorrent*
+   make torrent with optional choices.[9]
 
-Current features:
-
-- [x] Download pieces (leeching)
-- [x] Contact tracker periodically
-- [ ] Seed (upload) pieces
-- [ ] Support multi-file torrents
-- [ ] Resume a download
-
-Even though it's not practical at this point, feel free to learn from
-it, steal from it, improve it, laugh at it or just ignore it.
-
-Known issues:
-
-* Sometimes the client hangs at startup. It seems to relate to the
-  number of concurrent peer connections.
+Basic test `python pymktorrent -a annouce_url -f suhao.pdf`
+Run `python pymktorrent.py -h` to say more optinal choices.
 
 
-## Getting started
+```
+usage: pymktorrent.py [-h] -a ANNOUNCE_URLS -f INPUT_FILE [-c COMMENT] [-w NOT_WRITE] [-l PIECE_LENGTH]
+                      [-n TORRENT_NAME] [-p TORRENT_PATH] [-v VERBOSE]
 
-Install the needed dependencies and run the unit tests with:
+options:
+  -h, --help            show this help message and exit
+  -a ANNOUNCE_URLS, --announce-urls ANNOUNCE_URLS
+                        Announce url of the tracker. (default: None)
+  -f INPUT_FILE, --input-file INPUT_FILE
+                        The input file to be made .torrent of (default: None)
+  -c COMMENT, --comment COMMENT
+                        Comment to the meta-info of the .torrent file (default: None)
+  -w NOT_WRITE, --not-write NOT_WRITE
+                        Don't write the creation date. (default: None)
+  -l PIECE_LENGTH, --piece-length PIECE_LENGTH
+                        The length of a piece. (default: None)
+  -n TORRENT_NAME, --torrent-name TORRENT_NAME
+                        set the name of the torrent (default: None)
+  -p TORRENT_PATH, --torrent-path TORRENT_PATH
+                        set the path and filename of the created file default is <name>.torrent (default: None)
+  -v VERBOSE, --verbose VERBOSE
+                        be verbose (default: None)
 
-    $ make init
-    $ make test
+```
 
-In order to download a torrent file, run this command:
+### 2. *multi-file-pieces*
+Basic test: `python pieces.py -t ubuntu.torrent` to download the $.torrent$ file.([3],[4],[5],[6],[7],[8])
 
-    $ python pieces.py -v tests/data/bootfloppy-utils.img.torrent
+![visual pieces](bittorrent/img/2.png)
 
-If everything goes well, your torrent should be downloaded and the
-program terminated. You can stop the client using `Ctrl + C`.
+Run `python pieces.py -h` to say more optinal choices.
+```
+usage: pieces.py [-h] [-t TORRENT] [-m MAGNET_LINK] [-v] [-o] [-a] [-c] [-e] [-r] [-b] [-p PORT] [-d DHT]
 
+options:
+  -h, --help            show this help message and exit
+  -t TORRENT, --torrent TORRENT
+                        the .torrent to download (default: None)
+  -m MAGNET_LINK, --magnet-link MAGNET_LINK
+                        the magnet link url to download (default: None)
+  -v, --verbose         enable verbose output (default: False)
+  -o, --optimistic-unchoking
+                        Whether to use the optimistic unchoking strategy. (default: False)
+  -a, --anti-snubbing   Whether to use the anti-snubbing strategy. (default: False)
+  -c, --choking-strategy
+                        Whether to use the choking strategy. (default: False)
+  -e, --end-game-mode   Whether to use the End-game optimization. (default: False)
+  -r, --rarest-piece-first
+                        Whether to use the rarest piece first strategy. (default: False)
+  -b, --bbs-plus        Whether to enable bbs plus optimization (May lead to network congestion and bandwidth
+                        waste). (default: False)
+  -p PORT, --port PORT  The port that the local DHT node is listening from. (default: None)
+  -d DHT, --dht DHT     Whether use DHT(Distributed Hash Table) extension. (default: None)
+```
 
-## Design considerations
+### 3. *P2P*
+P2P punching([1],[2]) implemented in Python. The server serves as a STUN server or a TURN server based on the NAT type.
 
-The purpose with implementing this client was to learn myself some
-`asyncio` (and other Python 3.5 features, such as _type hinting_)
-together with my old itch of implementing the BitTorrent protocol.
+Python p2p chat client/server with built-in NAT traversal (UDP hole punching).  
 
-Thus, the code have been written to be as clear and simple as possible,
-not bothering about efficiency or performance. E.g. the pieces are all
-requested in order, not implementing a _rares first_ algorithm, and the
-pieces are all kept in memory until the entire torrent is downloaded.
+#### Usage
 
+Suppose you run server.py on a VPS with ip 1.2.3.4, listening on port 5678  
+```bash
+$ server.py 5678
+```  
 
-### Code walkthrough
+On client A and client B (run this on both clients):  
+```bash
+$ client.py 1.2.3.4 5678 100  
+```  
+The number `100` is used to match clients, you can choose any number you like but only clients with the **same** number will be linked by server. If two clients get linked, two people can chat by typing in terminal, and once you hit `<ENTER>` your partner will see your message in his terminal.   
+Encoding is a known issue since I didn't pay much effort on making this tool perfect, but as long as you type English it will be fine.
 
-The `pieces.client.TorrentClient` is the center piece, it:
+#### Test Mode
 
-* Connects to the tracker in order to receive the peers to connect to.
+You could do simulation testing by specifying a fourth parameter of `client.py`, it will assume that your client is behind a specific type of NAT device.
 
-* Based on that result, creates a Queue of peers that can be connected
-  to.
+Here are the corresponding NAT type and number:  
 
-* Determine the order in which the pieces should be requested from the
-  remote peers.
+	FullCone         0  
+	RestrictNAT      1  
+	RestrictPortNAT  2  
+	SymmetricNAT     3   
 
-* Shuts down the client once the download is complete.
-
-
-The strategy on which piece to request next and the assembly of
-retrieved pieces is implemented in the `pieces.client.PieceManager`. As
-previously stated, the strategy implemented is the simplest one
-possible.
-
-Notice, the file writing is synchronous something that could be
-improved.
-
-The BitTorrent specifics is implemented in the `pieces.protocol` module
-where the `pieces.protocol.PeerConnection` sets up a connection to one
-of the remote peers retrieved from the tracker. This class handles the
-control flow of messages between the two peers.
-
-BitTorrent is a binary protocol, and all decoding of messages is
-implemented as a _async iterator_ under he name
-`pieces.protocol.PeerStreamIterator`. The async part is that this
-iterator will keep reading and parsing the raw data received from the
-socket until the connection is closed.
-
-Each of BitTorrents messages is implemented as separate classes, each
-with a `encode` and a `decode` method. However, since this client
-currently does not support seeding - not all of the messages goes in
-both ways.
-
-
-## References
-
-There is plenty of information on how to write a BitTorrent client
-available on the Internet. These two articles were the real enablers
-for my implementation:
-
-* http://www.kristenwidman.com/blog/33/how-to-write-a-bittorrent-client-part-1/
-
-* https://wiki.theory.org/BitTorrentSpecification
-
-Asyncio is fairly new and I have not seen that many articles about it,
-at least not where the code examples are a little bit more elaborate
-than having a few coroutines sleep. Out of the ones I read and can
-recommend these are on the top of my list:
-
-* http://www.snarky.ca/how-the-heck-does-async-await-work-in-python-3-5
-
-* http://www.pythonsandbarracudas.com/blog/2015/11/22/developing-a-computational-pipeline-using-the-asyncio-module-in-python-3
-
-* http://dabeaz.com/coroutines/Coroutines.pdf
+So you might run
+```bash
+$ client.py 1.2.3.4 5678 100 1
+```   
+pretending your client is behind RestrictNAT. 
 
 
-# License
+[1]:http://www.cs.nccu.edu.tw/~lien/Writing/NGN/firewall.htm
+[2]:https://bford.info/pub/net/p2pnat/index.html
+[3]:https://github.com/bmuller/rpcudp.git
+[4]:http://bittorrent.org/beps/bep_0005.html
+[5]:https://inria.hal.science/inria-00000156/en
+[6]:https://www.scs.stanford.edu/~dm/home/papers/kpos.pdf
+[7]:https://snarky.ca/how-the-heck-does-async-await-work-in-python-3-5/
+[8]:https://github.com/danfolkes/Magnet2Torrent.git
+[9]:https://en.wikipedia.org/wiki/Bencode
 
-The client is released under the Apache v2 license, see LICENCE.
